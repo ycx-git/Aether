@@ -1,9 +1,8 @@
 ---
 description: "find issue(s) on github"
-model: opencode/claude-haiku-4-5
 ---
 
-Search through existing issues in anomalyco/opencode using the gh cli to find issues matching this query:
+Search existing issues in `ycx-git/Aether` with `gh issue list --repo ycx-git/Aether`, unless the user explicitly selects another repository. If Issues are disabled, report that fact; do not enable them or create issues automatically. Find matches for:
 
 $ARGUMENTS
 

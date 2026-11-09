@@ -4,6 +4,13 @@
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 
+## Personal fork
+
+- Development targets `ycx-git/Aether`, base `dev`. Use explicit repository arguments, such as `gh pr ... --repo ycx-git/Aether` and `gh api repos/ycx-git/Aether/...`. `origin` is the personal fork; use `upstream` for synchronization. Publishing to upstream requires an explicit user request.
+- Issues are optional. Do not create an issue just to open a PR. Keep existing templates; mark inapplicable issue fields as such and report actual validation.
+- Inherit models from the active configuration; do not pin commands to old upstream provider models.
+- Preserve development branches after merging. Run the repository's pre-push version and type checks.
+
 ## Style Guide
 
 ### General Principles
