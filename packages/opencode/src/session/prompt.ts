@@ -358,7 +358,9 @@ export namespace SessionPrompt {
     release(sessionID, signal)
   }
 
-  export async function cancel(sessionID: SessionID): Promise<void> {
+  export async function cancel(sessionID: SessionID, seen = new Set<SessionID>()): Promise<void> {
+    if (seen.has(sessionID)) return
+    seen.add(sessionID)
     // The abort signal lives in the session's own instance; cancelling from
     // another workspace's instance would silently miss the running loop.
     // Resolution is cross-project. A missing session skips the rebind: the
@@ -370,14 +372,16 @@ export namespace SessionPrompt {
       return undefined
     })
     if (session && Filesystem.resolve(session.directory) !== Instance.directory) {
-      return Instance.provide({ directory: session.directory, fn: () => cancel(sessionID) })
+      seen.delete(sessionID)
+      return Instance.provide({ directory: session.directory, fn: () => cancel(sessionID, seen) })
     }
     log.info("cancel", { sessionID })
+    const errors: unknown[] = []
     if (session?.engine) {
       NativeAnswers.cancel(sessionID)
       const { NativeCompact } = await import("../native/compact")
-      await NativeCompact.cancel(sessionID)
-      await NativeQueue.pause(sessionID).catch((error) => log.warn("pause native queue", { sessionID, error }))
+      await NativeCompact.cancel(sessionID).catch((error) => errors.push(error))
+      await NativeQueue.pause(sessionID).catch((error) => errors.push(error))
     }
     const s = state()
     const match = s[sessionID]
@@ -389,15 +393,44 @@ export namespace SessionPrompt {
       }
       delete s[sessionID]
     }
-    // Canceling also stops a pending connection-failure retry wait.
-    await SessionWatchdog.clear(sessionID)
-    await SessionRecovery.repairSession(sessionID)
-    await SessionStatus.set(sessionID, { type: "idle" })
+    try {
+      if (session) {
+        const { AsyncTasks } = await import("./async-task")
+        // A broken child ledger must not prevent stopping the root or siblings.
+        await AsyncTasks.pause(sessionID).catch((error) => {
+          errors.push(error)
+        })
+        const children = await Session.ownedChildren(sessionID)
+        // User-created conversation forks are separate work, not delegated jobs.
+        const results = await Promise.allSettled(
+          children.filter((child) => !child.forkParentSessionID).map((child) => cancel(child.id, seen)),
+        )
+        for (const result of results) if (result.status === "rejected") errors.push(result.reason)
+        await AsyncTasks.drain(sessionID)
+      }
+    } catch (error) {
+      errors.push(error)
+    } finally {
+      // Canceling also stops a pending connection-failure retry wait, even if a
+      // descendant failed to clean up. Preserve failures for the caller.
+      await SessionWatchdog.clear(sessionID).catch((error) => {
+        errors.push(error)
+      })
+      await SessionRecovery.repairSession(sessionID).catch((error) => {
+        errors.push(error)
+      })
+      await SessionStatus.set(sessionID, { type: "idle" }).catch((error) => {
+        errors.push(error)
+      })
+    }
+    if (errors.length) throw new AggregateError(errors, "Some delegated tasks could not be stopped cleanly")
   }
 
   export const LoopInput = z.object({
     sessionID: SessionID.zod,
     resume_existing: z.boolean().optional(),
+    async_owner: SessionID.zod.optional(),
+    async_job: z.string().optional(),
   })
   export type LoopInput = z.output<typeof LoopInput>
   async function runLoop(input: LoopInput, claim?: AbortSignal): Promise<MessageV2.WithParts> {
@@ -409,7 +442,11 @@ export namespace SessionPrompt {
       // re-claim so the persisted message still gets its reply instead of
       // surfacing BusyError after the fact, but never adopt a claim taken by
       // a newer prompt (two concurrent loops would corrupt the session)
-      const abort = resume_existing ? (resume(sessionID, claim) ?? start(sessionID)) : start(sessionID)
+      const acquire = () => (resume_existing ? (resume(sessionID, claim) ?? start(sessionID)) : start(sessionID))
+      const abort =
+        input.async_owner && input.async_job
+          ? await (await import("./async-task")).AsyncTasks.claim(input.async_owner, input.async_job, acquire)
+          : acquire()
       if (!abort) {
         throw new Session.BusyError(sessionID)
       }

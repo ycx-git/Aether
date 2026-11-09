@@ -1609,7 +1609,9 @@ export namespace Session {
     }
   }
 
-  export const children = fn(SessionID.zod, async (parentID) => {
+  // Internal ownership traversal must include delegated sessions. The public
+  // conversation list below intentionally hides them from branch navigation.
+  export const ownedChildren = fn(SessionID.zod, async (parentID) => {
     const project = Instance.project
     const rows = Database.useProject(project.id, (db) =>
       db
@@ -1618,7 +1620,11 @@ export namespace Session {
         .where(and(eq(SessionTable.project_id, project.id), eq(SessionTable.parent_id, parentID)))
         .all(),
     )
-    return rows.map((row) => fromRow(row)).filter((s) => s.parentID === parentID && !isSubagentSession(s))
+    return rows.map((row) => fromRow(row)).filter((s) => s.parentID === parentID)
+  })
+
+  export const children = fn(SessionID.zod, async (parentID) => {
+    return (await ownedChildren(parentID)).filter((s) => !isSubagentSession(s))
   })
 
   export const tree = fn(SessionID.zod, async (sessionID): Promise<TreeResult> => {

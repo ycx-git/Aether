@@ -8,6 +8,7 @@ import { Session } from "../../session"
 import { estimateSessionBackup, importSessionBackup } from "../../session/backup"
 import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
+import { AsyncTasks } from "../../session/async-task"
 import { SessionCompaction } from "../../session/compaction"
 import { SessionRevert } from "../../session/revert"
 import { Native } from "../../native/schema"
@@ -101,6 +102,49 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const result = await SessionStatus.list()
         return c.json(Object.fromEntries(result))
+      },
+    )
+    .get(
+      "/:sessionID/async_tasks",
+      describeRoute({
+        summary: "Read owned asynchronous task metadata",
+        operationId: "session.asyncTasks",
+        responses: {
+          200: {
+            description: "Durable task metadata; no prompts or result bodies",
+            content: { "application/json": { schema: resolver(AsyncTasks.Metadata) } },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        await Session.get(sessionID)
+
+        return c.json(await AsyncTasks.status(sessionID))
+      },
+    )
+    .post(
+      "/:sessionID/async_tasks/resume",
+      describeRoute({
+        summary: "Explicitly rearm async task dispatch after a verified pause",
+        operationId: "session.resumeAsyncTasks",
+        responses: {
+          200: {
+            description: "Rearmed without resubmitting old jobs",
+            content: { "application/json": { schema: resolver(AsyncTasks.Metadata) } },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      validator("json", z.object({ expected_pause_token: z.string().nullable() })),
+      async (c) => {
+        const { sessionID } = c.req.valid("param")
+        await Session.get(sessionID)
+
+        return c.json(await AsyncTasks.resume(sessionID, c.req.valid("json").expected_pause_token))
       },
     )
     .post(

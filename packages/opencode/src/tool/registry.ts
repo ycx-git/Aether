@@ -8,6 +8,7 @@ import { GrepTool } from "./grep"
 import { BatchTool } from "./batch"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
+import { TaskStartTool, TaskCollectTool, TaskStatusTool, TaskCancelTool } from "./async-task"
 import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -136,6 +137,10 @@ export namespace ToolRegistry {
           EditTool,
           WriteTool,
           TaskTool,
+          TaskStartTool,
+          TaskCollectTool,
+          TaskStatusTool,
+          TaskCancelTool,
           WebFetchTool,
           TodoWriteTool,
           WebSearchTool,

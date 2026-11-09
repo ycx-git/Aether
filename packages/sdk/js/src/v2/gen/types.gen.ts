@@ -337,6 +337,18 @@ export type EventFileEdited = {
   }
 }
 
+export type EventTaskCompleted = {
+  type: "task.completed"
+  properties: {
+    sessionID: string
+    childSessionID: string
+    taskID: string
+    eventID: string
+    sequence: number
+    status: "completed" | "failed" | "cancelled" | "interrupted" | "uncertain"
+  }
+}
+
 export type Todo = {
   /**
    * Brief description of the task
@@ -1201,6 +1213,7 @@ export type Event =
   | EventQuestionRejected
   | EventSessionCompacted
   | EventFileEdited
+  | EventTaskCompleted
   | EventTodoUpdated
   | EventTuiPromptAppend
   | EventTuiCommandExecute
@@ -2335,6 +2348,68 @@ export type McpResource = {
   description?: string
   mimeType?: string
   client: string
+}
+
+export type AsyncTaskMetadata = {
+  schema_version: 1
+  owner_session_id: string
+  root_session_id: string
+  revision: number
+  event_cursor: number
+  paused: boolean
+  pause_token: string | null
+  needs_attention: boolean
+  jobs: Array<{
+    id: string
+    owner_session_id: string
+    child_session_id: string
+    description: string
+    subagent_type: string
+    category: "exploration" | "support"
+    direction: string
+    status:
+      | "starting"
+      | "running"
+      | "retrying"
+      | "completed"
+      | "failed"
+      | "cancelled"
+      | "interrupted"
+      | "uncertain"
+      | "cancelling"
+    model: {
+      providerID: string
+      modelID: string
+    } | null
+    variant: string | null
+    event_seq: number
+    acknowledged: boolean
+    child_exists: boolean
+    [key: string]:
+      | unknown
+      | string
+      | string
+      | "exploration"
+      | "support"
+      | "starting"
+      | "running"
+      | "retrying"
+      | "completed"
+      | "failed"
+      | "cancelled"
+      | "interrupted"
+      | "uncertain"
+      | "cancelling"
+      | {
+          providerID: string
+          modelID: string
+        }
+      | null
+      | string
+      | null
+      | number
+      | boolean
+  }>
 }
 
 export type SessionTreeResult =
@@ -5001,6 +5076,76 @@ export type SessionStatusResponses = {
 }
 
 export type SessionStatusResponse = SessionStatusResponses[keyof SessionStatusResponses]
+
+export type SessionAsyncTasksData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/async_tasks"
+}
+
+export type SessionAsyncTasksErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionAsyncTasksError = SessionAsyncTasksErrors[keyof SessionAsyncTasksErrors]
+
+export type SessionAsyncTasksResponses = {
+  /**
+   * Durable task metadata; no prompts or result bodies
+   */
+  200: AsyncTaskMetadata
+}
+
+export type SessionAsyncTasksResponse = SessionAsyncTasksResponses[keyof SessionAsyncTasksResponses]
+
+export type SessionResumeAsyncTasksData = {
+  body?: {
+    expected_pause_token: string | null
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/async_tasks/resume"
+}
+
+export type SessionResumeAsyncTasksErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionResumeAsyncTasksError = SessionResumeAsyncTasksErrors[keyof SessionResumeAsyncTasksErrors]
+
+export type SessionResumeAsyncTasksResponses = {
+  /**
+   * Rearmed without resubmitting old jobs
+   */
+  200: AsyncTaskMetadata
+}
+
+export type SessionResumeAsyncTasksResponse = SessionResumeAsyncTasksResponses[keyof SessionResumeAsyncTasksResponses]
 
 export type SessionImportData = {
   body?: {

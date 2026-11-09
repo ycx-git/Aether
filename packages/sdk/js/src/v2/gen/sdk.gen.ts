@@ -385,6 +385,8 @@ import type {
   SessionAbortResponses,
   SessionArchiveErrors,
   SessionArchiveResponses,
+  SessionAsyncTasksErrors,
+  SessionAsyncTasksResponses,
   SessionBackupEstimateErrors,
   SessionBackupEstimateResponses,
   SessionChildrenErrors,
@@ -423,6 +425,8 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionResumeAsyncTasksErrors,
+  SessionResumeAsyncTasksResponses,
   SessionRevertErrors,
   SessionRevertResponses,
   SessionShareErrors,
@@ -2769,6 +2773,77 @@ export class Session2 extends HeyApiClient {
       url: "/session/status",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Read owned asynchronous task metadata
+   */
+  public asyncTasks<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionAsyncTasksResponses, SessionAsyncTasksErrors, ThrowOnError>({
+      url: "/session/{sessionID}/async_tasks",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Explicitly rearm async task dispatch after a verified pause
+   */
+  public resumeAsyncTasks<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      expected_pause_token?: string | null
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "expected_pause_token" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionResumeAsyncTasksResponses,
+      SessionResumeAsyncTasksErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/async_tasks/resume",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 

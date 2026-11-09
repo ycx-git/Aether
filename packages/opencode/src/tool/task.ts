@@ -12,7 +12,7 @@ import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { Permission } from "@/permission"
 
-const parameters = z.object({
+export const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
   prompt: z.string().describe("The task for the agent to perform"),
   subagent_type: z.string().describe("The type of specialized agent to use for this task"),
@@ -24,6 +24,82 @@ const parameters = z.object({
     .optional(),
   command: z.string().describe("The command that triggered this task").optional(),
 })
+
+export async function prepare(params: z.infer<typeof parameters>, ctx: Tool.Context, id?: SessionID) {
+  const config = await Config.get()
+
+  // Skip permission check when user explicitly invoked via @ or command subtask
+  if (!ctx.extra?.bypassAgentCheck) {
+    await ctx.ask({
+      permission: "task",
+      patterns: [params.subagent_type],
+      always: ["*"],
+      metadata: {
+        description: params.description,
+        subagent_type: params.subagent_type,
+      },
+    })
+  }
+
+  const agent = await Agent.get(params.subagent_type)
+  if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
+
+  const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
+  const hasTodoWritePermission = agent.permission.some((rule) => rule.permission === "todowrite")
+
+  const callerAgent = ctx.agent ? await Agent.get(ctx.agent) : undefined
+  const parent = await Session.get(ctx.sessionID)
+  const bound = Permission.merge(callerAgent?.permission ?? [], parent.permission ?? [])
+
+  const sessionPermission = Permission.intersection(bound, agent.permission)
+
+  // v0.6.0 fallback: deny task/todowrite for agents without explicit rules.
+  // Intersection only propagates existing deny rules — it doesn't create new ones.
+  // Agents with broad "*: allow" (like general) have no task/todowrite deny,
+  // but v0.6.0 explicitly denied these in session permission for all subagents.
+  const sessionDenyRules = [
+    ...(hasTodoWritePermission
+      ? []
+      : [{ permission: "todowrite" as const, pattern: "*" as const, action: "deny" as const }]),
+    ...(hasTaskPermission ? [] : [{ permission: "task" as const, pattern: "*" as const, action: "deny" as const }]),
+  ]
+
+  const finalPermission = [
+    ...sessionPermission,
+    ...sessionDenyRules,
+    ...(config.experimental?.primary_tools ?? []).map((t) => ({
+      permission: t,
+      pattern: "*",
+      action: "deny" as const,
+    })),
+  ]
+
+  const session = await iife(async () => {
+    if (params.task_id) {
+      const found = await Session.get(SessionID.make(params.task_id)).catch(() => {})
+      if (found && found.parentID === ctx.sessionID) {
+        await Session.setPermission({ sessionID: found.id, permission: finalPermission })
+        return found
+      }
+    }
+
+    return await Session.create({
+      id,
+      parentID: ctx.sessionID,
+      title: params.description + ` (@${agent.name} subagent)`,
+      permission: finalPermission,
+    })
+  })
+  const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
+  if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
+
+  const model = agent.model ?? {
+    modelID: msg.info.modelID,
+    providerID: msg.info.providerID,
+  }
+
+  return { session, model, agent }
+}
 
 export const TaskTool = Tool.define("task", async (ctx) => {
   const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary"))
@@ -45,76 +121,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
     description,
     parameters,
     async execute(params: z.infer<typeof parameters>, ctx) {
-      const config = await Config.get()
-
-      // Skip permission check when user explicitly invoked via @ or command subtask
-      if (!ctx.extra?.bypassAgentCheck) {
-        await ctx.ask({
-          permission: "task",
-          patterns: [params.subagent_type],
-          always: ["*"],
-          metadata: {
-            description: params.description,
-            subagent_type: params.subagent_type,
-          },
-        })
-      }
-
-      const agent = await Agent.get(params.subagent_type)
-      if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
-
-      const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
-      const hasTodoWritePermission = agent.permission.some((rule) => rule.permission === "todowrite")
-
-      const callerAgent = ctx.agent ? await Agent.get(ctx.agent) : undefined
-      const parent = await Session.get(ctx.sessionID)
-      const bound = Permission.merge(callerAgent?.permission ?? [], parent.permission ?? [])
-
-      const sessionPermission = Permission.intersection(bound, agent.permission)
-
-      // v0.6.0 fallback: deny task/todowrite for agents without explicit rules.
-      // Intersection only propagates existing deny rules — it doesn't create new ones.
-      // Agents with broad "*: allow" (like general) have no task/todowrite deny,
-      // but v0.6.0 explicitly denied these in session permission for all subagents.
-      const sessionDenyRules = [
-        ...(hasTodoWritePermission
-          ? []
-          : [{ permission: "todowrite" as const, pattern: "*" as const, action: "deny" as const }]),
-        ...(hasTaskPermission ? [] : [{ permission: "task" as const, pattern: "*" as const, action: "deny" as const }]),
-      ]
-
-      const finalPermission = [
-        ...sessionPermission,
-        ...sessionDenyRules,
-        ...(config.experimental?.primary_tools ?? []).map((t) => ({
-          permission: t,
-          pattern: "*",
-          action: "deny" as const,
-        })),
-      ]
-
-      const session = await iife(async () => {
-        if (params.task_id) {
-          const found = await Session.get(SessionID.make(params.task_id)).catch(() => {})
-          if (found && found.parentID === ctx.sessionID) {
-            await Session.setPermission({ sessionID: found.id, permission: finalPermission })
-            return found
-          }
-        }
-
-        return await Session.create({
-          parentID: ctx.sessionID,
-          title: params.description + ` (@${agent.name} subagent)`,
-          permission: finalPermission,
-        })
-      })
-      const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
-      if (msg.info.role !== "assistant") throw new Error("Not an assistant message")
-
-      const model = agent.model ?? {
-        modelID: msg.info.modelID,
-        providerID: msg.info.providerID,
-      }
+      const { session, model, agent } = await prepare(params, ctx)
 
       ctx.metadata({
         title: params.description,
@@ -151,6 +158,10 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         parts: promptParts,
       })
 
+      if (result.info.role === "assistant" && result.info.error) {
+        await SessionPrompt.cancel(session.id)
+        throw new Error(`Subagent failed: ${result.info.error.name}`)
+      }
       const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
 
       const output = [
